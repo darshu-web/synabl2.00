@@ -14,6 +14,7 @@ import { Report } from './pages/dashboard/Report';
 import { Subscription } from './pages/dashboard/Subscription';
 import { UserProvider, useUser } from './context/UserContext';
 import { Settings } from './pages/dashboard/Settings';
+import { Paraphraser } from './pages/dashboard/Paraphraser';
 
 const ProtectedRoute = ({ children }) => {
     const { user, loading } = useUser();
@@ -75,6 +76,7 @@ function App() {
                         <Route path="/reports/latest" element={<Report />} />
                         <Route path="/subscription" element={<Subscription />} />
                         <Route path="/settings" element={<Settings />} />
+                        <Route path="/paraphraser" element={<Paraphraser />} />
                     </Route>
 
                     <Route path="*" element={<Navigate to="/" replace />} />

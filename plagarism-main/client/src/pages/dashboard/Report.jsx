@@ -5,15 +5,21 @@ import { Download, AlertTriangle, FileText, Globe, Layers, Brain, Loader2 } from
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { scanService } from '../../services/scanService';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { useUser } from '../../context/UserContext';
+import { toast } from 'sonner';
 
 export const Report = () => {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
+    const { user } = useUser();
     const id = searchParams.get('id');
 
     const [scanData, setScanData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [isExporting, setIsExporting] = useState(false);
 
     useEffect(() => {
         const fetchScan = async () => {
@@ -71,6 +77,153 @@ export const Report = () => {
         { name: 'AI Prediction', value: aiScore, color: '#8B5CF6' }
     ];
 
+    const handleExportPdf = async () => {
+        if (!scanData) return;
+        setIsExporting(true);
+
+        try {
+            const doc = new jsPDF();
+            const pageWidth = doc.internal.pageSize.width;
+            let currentY = 20;
+
+            // 1. Header
+            doc.setFillColor(30, 41, 59); // Slate-800
+            doc.rect(0, 0, pageWidth, 40, 'F');
+            
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(22);
+            doc.setFont('helvetica', 'bold');
+            doc.text('SYNABL ANALYSIS REPORT', 20, 25);
+            
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`Generated on: ${new Date().toLocaleString()}`, 20, 32);
+
+            currentY = 55;
+
+            // 2. Document & Author Info
+            doc.setTextColor(30, 41, 59);
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'bold');
+            doc.text('DOCUMENT DETAILS', 20, currentY);
+            currentY += 10;
+            
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`Filename: ${scanData.filename}`, 25, currentY);
+            currentY += 7;
+            doc.text(`Author: ${user?.name || 'Authorized User'}`, 25, currentY);
+            currentY += 7;
+            doc.text(`Word Count: ${scanData.words?.toLocaleString() || 0} words`, 25, currentY);
+            currentY += 15;
+
+            // 3. SCORE SUMMARY BOXES
+            doc.setDrawColor(226, 232, 240);
+            doc.rect(20, currentY, (pageWidth - 50) / 2, 35);
+            doc.rect(pageWidth / 2 + 5, currentY, (pageWidth - 50) / 2, 35);
+
+            // Plagiarism Box
+            doc.setFont('helvetica', 'bold');
+            doc.text('PLAGIARISM SCORE', 25, currentY + 10);
+            doc.setFontSize(24);
+            doc.setTextColor(sim > 30 ? 239 : 16, sim > 30 ? 68 : 185, sim > 30 ? 68 : 129); // Red or Emerald
+            doc.text(`${sim}%`, 25, currentY + 25);
+
+            // AI Box
+            doc.setTextColor(30, 41, 59);
+            doc.setFontSize(10);
+            doc.text('AI PROBABILITY', pageWidth / 2 + 10, currentY + 10);
+            doc.setFontSize(24);
+            doc.setTextColor(139, 92, 246); // Purple
+            doc.text(`${aiScore}%`, pageWidth / 2 + 10, currentY + 25);
+
+            currentY += 50;
+
+            // 4. FULL TEXT WITH HIGHLIGHTS
+            doc.setTextColor(30, 41, 59);
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'bold');
+            doc.text('ANALYZED CONTENT', 20, currentY);
+            currentY += 10;
+
+            const results = scanData.plagiarismResult?.results || [];
+            if (results.length > 0) {
+                results.forEach((item, idx) => {
+                    const sentence = item.sentence;
+                    if (!sentence) return;
+
+                    const sSim = (item.maxSimilarity || item.similarity || 0) * 100;
+                    const splitText = doc.splitTextToSize(String(sentence), pageWidth - 40);
+                    const blockHeight = (splitText.length * 5) + 2;
+
+                    // Check for page overflow
+                    if (currentY + blockHeight > 270) {
+                        doc.addPage();
+                        currentY = 20;
+                    }
+
+                    if (sSim > 15) {
+                        // Background Highlight (Turnitin Style)
+                        doc.setGState(new doc.GState({ opacity: 0.15 }));
+                        if (sSim > 45) {
+                            doc.setFillColor(239, 68, 68); // Red
+                            doc.setTextColor(185, 28, 28); // Dark Red Text
+                        } else {
+                            doc.setFillColor(245, 158, 11); // Orange
+                            doc.setTextColor(180, 83, 9); // Dark Orange Text
+                        }
+                        
+                        doc.rect(18, currentY - 4, pageWidth - 36, blockHeight, 'F');
+                        doc.setGState(new doc.GState({ opacity: 1.0 }));
+                        doc.setFont('helvetica', 'bold');
+
+                        // Add small reference number
+                        doc.setFontSize(7);
+                        doc.text(`[${idx + 1}]`, 15, currentY - 1);
+                        doc.setFontSize(10);
+                    } else {
+                        doc.setTextColor(51, 65, 85); // Slate-700
+                        doc.setFont('helvetica', 'normal');
+                    }
+
+                    doc.text(splitText, 20, currentY);
+                    currentY += blockHeight;
+                });
+            } else {
+                doc.text("No sentence analysis available.", 20, currentY);
+            }
+
+            // 5. SOURCES TABLE (New Page)
+            doc.addPage();
+            doc.setTextColor(30, 41, 59);
+            doc.setFontSize(14);
+            doc.setFont('helvetica', 'bold');
+            doc.text('TOP MATCHED SOURCES', 20, 20);
+
+            const tableData = (scanData.sources || []).map(s => [
+                s.name,
+                `${s.match}%`,
+                s.link || 'Internal Database'
+            ]);
+
+            autoTable(doc, {
+                startY: 30,
+                head: [['Source', 'Similarity', 'URL / Reference']],
+                body: tableData,
+                theme: 'striped',
+                headStyles: { fillColor: [139, 92, 246] }, // Purple
+                styles: { fontSize: 8 }
+            });
+
+            doc.save(`Analysis_Report_${scanData.filename.replace('.pdf', '')}.pdf`);
+        } catch (err) {
+            console.error("PDF Export failed", err);
+            toast.error("Failed to generate PDF. Please try again.");
+        } finally {
+            setIsExporting(false);
+        }
+    };
+
     return (
         <div className="space-y-6">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4">
@@ -78,9 +231,9 @@ export const Report = () => {
                     <h1 className="text-3xl font-bold text-heading mb-2">Analysis Report</h1>
                     <p className="text-body">{scanData.filename} • {scanData.words?.toLocaleString() || 0} words</p>
                 </div>
-                <Button variant="outline" className="gap-2">
-                    <Download size={18} />
-                    Export PDF
+                <Button variant="outline" className="gap-2" onClick={() => handleExportPdf()}>
+                    {isExporting ? <Loader2 className="animate-spin" size={18} /> : <Download size={18} />}
+                    {isExporting ? 'Generating...' : 'Export PDF'}
                 </Button>
             </div>
 
@@ -124,7 +277,10 @@ export const Report = () => {
                         </GlassCard>
 
                         <GlassCard className="p-8 text-center flex flex-col items-center justify-center border-purple-500/20">
-                            <h3 className="text-lg font-bold text-heading mb-6 w-full text-left">AI Content Score</h3>
+                            <div className="flex items-center justify-between w-full mb-6">
+                                <h3 className="text-lg font-bold text-heading">AI Content Score</h3>
+                                <span className="text-[10px] bg-purple-500/10 text-purple-400 px-2 py-0.5 rounded-full border border-purple-500/20 font-bold tracking-wider uppercase">DivEye Engine</span>
+                            </div>
 
                             <div className="w-48 h-48 relative mb-6">
                                 <ResponsiveContainer width="100%" height="100%">
@@ -155,6 +311,12 @@ export const Report = () => {
                                     <span className="text-xs text-muted uppercase tracking-wider font-semibold">AI Prob</span>
                                 </div>
                             </div>
+                            
+                            {scanData.aiResult?.confidence && (
+                                <div className="text-sm font-medium text-body">
+                                    Confidence: <span className="text-accent">{scanData.aiResult.confidence}%</span>
+                                </div>
+                            )}
                         </GlassCard>
                     </div>
 
@@ -196,6 +358,27 @@ export const Report = () => {
                             )}
                         </div>
                     </GlassCard>
+
+                    {scanData.aiResult?.indicators && scanData.aiResult.indicators.length > 0 && (
+                        <GlassCard className="p-6 border-accent/10">
+                            <h3 className="text-heading font-bold mb-4 flex items-center gap-2">
+                                <Brain size={18} className="text-purple-400" /> Advanced Indicators
+                            </h3>
+                            <div className="space-y-4">
+                                {scanData.aiResult.indicators.map((indicator, i) => (
+                                    <div key={i} className="flex flex-col gap-1 border-b border-borderLight pb-3 last:border-0 last:pb-0">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-sm font-semibold text-heading">{indicator.name}</span>
+                                            <span className="text-xs font-mono font-bold text-accent">{indicator.value}</span>
+                                        </div>
+                                        {indicator.note && (
+                                            <p className="text-[11px] text-muted leading-tight">{indicator.note}</p>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </GlassCard>
+                    )}
                 </div>
 
                 {/* Text Viewer */}

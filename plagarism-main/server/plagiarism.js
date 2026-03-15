@@ -1,4 +1,38 @@
 const STOPWORDS = new Set(["a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "at", "by", "from", "for", "with", "in", "on", "to", "is", "are", "was", "were", "be", "been", "being", "it", "this", "that", "these", "those"]);
+const DEFAULT_CORE_API_KEY = "3i2nyCtj7vYPOx4Hz8MWcrd5RBksAIep";
+const CORE_API_KEY = process.env.CORE_API_KEY || DEFAULT_CORE_API_KEY;
+const CORE_API_URL = process.env.CORE_API_URL || "https://api.core.ac.uk/v3/search/works";
+const ARXIV_API_URL = process.env.ARXIV_API_URL || "https://export.arxiv.org/api/query";
+const SCHOLAR_API_URL =
+  process.env.SCHOLAR_API_URL ||
+  process.env.SEMANTIC_SCHOLAR_API_URL ||
+  "https://api.semanticscholar.org/graph/v1/paper/search";
+
+function normalizeText(text) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+function isHttpUrl(value) {
+  if (typeof value !== "string") return false;
+  return /^https?:\/\//i.test(value.trim());
+}
+
+function decodeXmlEntities(value) {
+  return String(value || "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function pickResultKey(item) {
+  const doi = normalizeText(item?.doi).toLowerCase();
+  if (doi) return `doi:${doi}`;
+  const url = normalizeText(item?.url);
+  if (url) return `url:${url.split("#")[0]}`;
+  return "";
+}
 
 export function cosineSimilarity(text1, text2) {
   const words1 = text1.toLowerCase().replace(/[^\w\s]/g, " ").split(/\s+/).filter(w => w.length > 2 && !STOPWORDS.has(w));
@@ -118,102 +152,259 @@ export async function fetchCrossrefDOI(doi) {
   }
 }
 
-export async function searchWeb(query) {
-  const urls = [];
-
+async function searchCore(query, limit = 6) {
   try {
     const searchQuery = encodeURIComponent(query.slice(0, 200));
-    const ddgUrl = `https://html.duckduckgo.com/html/?q=${searchQuery}`;
+    const coreUrl = `${CORE_API_URL}?q=${searchQuery}&limit=${limit}`;
+    const headers = {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    };
+    if (CORE_API_KEY) {
+      headers.Authorization = `Bearer ${CORE_API_KEY}`;
+    }
 
-    const response = await fetch(ddgUrl, {
+    const response = await fetch(coreUrl, { headers });
+    if (!response.ok) {
+      console.error(`CORE search error: ${response.status}`);
+      return [];
+    }
+
+    const data = await response.json();
+    const items = Array.isArray(data?.results)
+      ? data.results
+      : Array.isArray(data?.data)
+        ? data.data
+        : [];
+
+    return items
+      .map((item) => {
+        const doi = normalizeText(item?.doi || item?.identifiers?.doi || "");
+        const primaryUrl =
+          item?.downloadUrl ||
+          (Array.isArray(item?.sourceFulltextUrls)
+            ? item.sourceFulltextUrls[0]
+            : null) ||
+          item?.fullTextIdentifier ||
+          item?.url ||
+          (doi ? `https://doi.org/${doi}` : null);
+
+        if (!isHttpUrl(primaryUrl)) return null;
+
+        return {
+          url: primaryUrl,
+          title: normalizeText(item?.title),
+          doi: doi || null,
+          journal: normalizeText(item?.publisher || item?.journal) || null,
+          abstract: cleanAbstract(item?.abstract || item?.description),
+          source: "CORE",
+        };
+      })
+      .filter(Boolean);
+  } catch (error) {
+    console.error("CORE search error:", error.message || error);
+    return [];
+  }
+}
+
+async function searchArxiv(query, limit = 6) {
+  try {
+    const params = new URLSearchParams({
+      search_query: `all:${query.slice(0, 180)}`,
+      start: "0",
+      max_results: String(limit),
+      sortBy: "relevance",
+      sortOrder: "descending",
+    });
+    const endpoint = `${ARXIV_API_URL}?${params.toString()}`;
+    const response = await fetch(endpoint, {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       },
     });
 
-    const html = await response.text();
-
-    const resultMatches = html.match(/uddg=([^"&]+)/g) || [];
-    const ddgUrls = resultMatches
-      .map((match) => {
-        const encoded = match.replace("uddg=", "");
-        try {
-          return decodeURIComponent(encoded);
-        } catch {
-          return null;
-        }
-      })
-      .filter(
-        (url) => url && url.startsWith("http") && !url.includes("duckduckgo.com")
-      )
-      .slice(0, 6);
-
-    urls.push(...ddgUrls.filter(url => url !== null));
-  } catch (error) {
-    console.error("DuckDuckGo search error:", error.message || error);
-  }
-
-  try {
-    // Also search CrossRef for academic papers
-    const searchQuery = encodeURIComponent(query.slice(0, 150));
-    const crossrefUrl = `https://api.crossref.org/works?query=${searchQuery}&rows=10`;
-
-    const response = await fetch(crossrefUrl);
-    const data = await response.json();
-
-    if (data.message?.items) {
-      for (const item of data.message.items) {
-        if (item.URL) {
-          urls.push({
-            url: item.URL,
-            title: item.title?.[0],
-            doi: item.DOI,
-            journal: item['container-title']?.[0],
-            abstract: cleanAbstract(item.abstract),
-            source: 'Crossref Search'
-          });
-        }
-      }
+    if (!response.ok) {
+      console.error(`arXiv search error: ${response.status}`);
+      return [];
     }
 
-    // Check for direct DOIs in text
-    const dois = detectDOI(query);
+    const xml = await response.text();
+    const matches = [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/gi)];
+
+    return matches
+      .map((match) => {
+        const entry = match[1] || "";
+        const id = normalizeText(entry.match(/<id>([\s\S]*?)<\/id>/i)?.[1]);
+        const pdfUrl = normalizeText(
+          entry.match(/<link[^>]*title=["']pdf["'][^>]*href=["']([^"']+)["']/i)?.[1]
+        );
+        const title = normalizeText(
+          decodeXmlEntities(entry.match(/<title>([\s\S]*?)<\/title>/i)?.[1] || "")
+        );
+        const summary = normalizeText(
+          decodeXmlEntities(entry.match(/<summary>([\s\S]*?)<\/summary>/i)?.[1] || "")
+        );
+        const doi = normalizeText(entry.match(/<arxiv:doi>([\s\S]*?)<\/arxiv:doi>/i)?.[1]);
+        const url = isHttpUrl(pdfUrl) ? pdfUrl : id;
+
+        if (!isHttpUrl(url)) return null;
+
+        return {
+          url,
+          title: title || null,
+          doi: doi || null,
+          journal: "arXiv",
+          abstract: summary,
+          source: "arXiv",
+        };
+      })
+      .filter(Boolean);
+  } catch (error) {
+    console.error("arXiv search error:", error.message || error);
+    return [];
+  }
+}
+
+async function searchScholar(query, limit = 6) {
+  try {
+    const params = new URLSearchParams({
+      query: query.slice(0, 180),
+      limit: String(limit),
+      fields: "title,abstract,url,venue,externalIds",
+    });
+    const headers = {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    };
+    const scholarApiKey =
+      process.env.SCHOLAR_API_KEY || process.env.SEMANTIC_SCHOLAR_API_KEY;
+    if (scholarApiKey) {
+      headers["x-api-key"] = scholarApiKey;
+    }
+
+    const response = await fetch(`${SCHOLAR_API_URL}?${params.toString()}`, {
+      headers,
+    });
+
+    if (!response.ok) {
+      console.error(`Scholar search error: ${response.status}`);
+      return [];
+    }
+
+    const data = await response.json();
+    const items = Array.isArray(data?.data)
+      ? data.data
+      : Array.isArray(data?.results)
+        ? data.results
+        : [];
+
+    return items
+      .map((item) => {
+        const doi = normalizeText(item?.externalIds?.DOI || item?.doi || "");
+        const url = item?.url || (doi ? `https://doi.org/${doi}` : null);
+        if (!isHttpUrl(url)) return null;
+
+        return {
+          url,
+          title: normalizeText(item?.title) || null,
+          doi: doi || null,
+          journal: normalizeText(item?.venue) || null,
+          abstract: cleanAbstract(item?.abstract),
+          source: "Scholar",
+        };
+      })
+      .filter(Boolean);
+  } catch (error) {
+    console.error("Scholar search error:", error.message || error);
+    return [];
+  }
+}
+
+async function searchCrossref(query, limit = 8) {
+  try {
+    const searchQuery = encodeURIComponent(query.slice(0, 180));
+    const crossrefUrl = `https://api.crossref.org/works?query=${searchQuery}&rows=${limit}`;
+
+    const response = await fetch(crossrefUrl);
+    if (!response.ok) {
+      console.error(`CrossRef search error: ${response.status}`);
+      return [];
+    }
+
+    const data = await response.json();
+    if (!Array.isArray(data?.message?.items)) {
+      return [];
+    }
+
+    return data.message.items
+      .map((item) => ({
+        url: item.URL,
+        title: item.title?.[0] || null,
+        doi: item.DOI || null,
+        journal: item["container-title"]?.[0] || null,
+        abstract: cleanAbstract(item.abstract),
+        source: "Crossref Search",
+      }))
+      .filter((item) => isHttpUrl(item.url));
+  } catch (error) {
+    console.error("CrossRef search error:", error.message || error);
+    return [];
+  }
+}
+
+export async function searchWeb(query) {
+  const safeQuery = normalizeText(query).slice(0, 220);
+  if (!safeQuery) return [];
+
+  const results = [];
+
+  const [coreResults, arxivResults, scholarResults, crossrefResults] =
+    await Promise.all([
+      searchCore(safeQuery, 6),
+      searchArxiv(safeQuery, 6),
+      searchScholar(safeQuery, 6),
+      searchCrossref(safeQuery, 8),
+    ]);
+
+  results.push(...coreResults, ...arxivResults, ...scholarResults, ...crossrefResults);
+
+  try {
+    const dois = detectDOI(safeQuery);
     for (const doi of dois) {
       const metadata = await fetchCrossrefDOI(doi);
-      if (metadata && metadata.URL) {
-        urls.push({
+      if (metadata?.URL && isHttpUrl(metadata.URL)) {
+        results.push({
           url: metadata.URL,
-          title: metadata.title?.[0],
-          doi: metadata.DOI,
-          journal: metadata['container-title']?.[0],
+          title: metadata.title?.[0] || null,
+          doi: metadata.DOI || doi,
+          journal: metadata["container-title"]?.[0] || null,
           abstract: cleanAbstract(metadata.abstract),
-          source: 'Crossref DOI'
+          source: "Crossref DOI",
         });
       }
     }
   } catch (error) {
-    console.error("CrossRef search error:", error);
+    console.error("CrossRef DOI enrichment error:", error.message || error);
   }
 
-  // Handle unique URLs while keeping metadata
   const seen = new Set();
   const uniqueResults = [];
-  for (const item of urls) {
-    const url = typeof item === 'string' ? item : item.url;
-    if (!seen.has(url)) {
-      seen.add(url);
-      uniqueResults.push(item);
-    }
+  for (const item of results) {
+    if (!item || !isHttpUrl(item.url)) continue;
+    const key = pickResultKey(item) || item.url;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniqueResults.push(item);
   }
 
-  return uniqueResults.slice(0, 15);
+  return uniqueResults.slice(0, 10);
 }
 
 export async function fetchPageContent(url) {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
 
     const response = await fetch(url, {
       headers: {
@@ -250,7 +441,7 @@ export async function fetchPageContent(url) {
   } catch (error) {
     // Silent handling for common network/bot errors to keep logs clean
     if (error.name === 'AbortError') {
-      console.log(`Fetch timeout (8s): ${url.substring(0, 60)}...`);
+      console.log(`Fetch timeout (5s): ${url.substring(0, 60)}...`);
     } else {
       const errorMsg = error.message || error.toString();
       console.log(`Fetch error: ${url.substring(0, 60)}... (${errorMsg})`);

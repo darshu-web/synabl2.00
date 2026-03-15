@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, FileUp, FileText, CreditCard, Settings, LogOut, ShieldAlert, Sun, Moon, Menu, X } from 'lucide-react';
+import { LayoutDashboard, FileUp, FileText, CreditCard, Settings, LogOut, ShieldAlert, Sun, Moon, Menu, X, Sparkles } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useUser } from '../context/UserContext';
 import { useTheme } from '../context/ThemeContext';
@@ -16,6 +16,7 @@ export const DashboardLayout = () => {
         { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
         { label: 'Upload Document', icon: FileUp, path: '/upload' },
         { label: 'Reports', icon: FileText, path: '/reports' },
+        { label: 'Magic Rewriter', icon: Sparkles, path: '/paraphraser' },
         { label: 'Subscription', icon: CreditCard, path: '/subscription' },
         { label: 'Settings', icon: Settings, path: '/settings' },
     ];

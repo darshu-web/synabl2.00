@@ -42,32 +42,22 @@ It is a **free** alternative for plagiarism detection, ideal if you don’t have
 3. **Review Results**: Highlighted matches will be displayed based on the level of similarity.
 4. **Generate a PDF Report**: Download a detailed report of your results.
 
-### **AI Detection Ensemble (New)**
+### **AI Detection (ZipPy)**
 
-The AI detector now uses an ensemble approach:
+The AI detector now uses **thinkst/zippy** (compression-based AI detection) as the single backend detector.
 
-- Local NLP stylometry (always on)
-- Local open-source transformer model (always on by default): `openai-community/roberta-base-openai-detector`
-- Optional provider APIs (when keys are configured): **Sapling**, **ZeroGPT**, **Originality AI**, **GPTZero**
-
-No paid API keys are required for baseline AI detection. If API keys are not configured, the app still works with local detectors.
+- Repo used: `https://github.com/thinkst/zippy.git`
+- Ensemble engines: `lzma`, `brotli`, `zlib`
+- API remains compatible with existing frontend fields like `aiProbability`
 
 Backend environment variables:
 
-- `AI_LOCAL_MODEL_ENABLED` (optional, default: `true`)
-- `AI_LOCAL_MODEL_ID` (optional, default: `openai-community/roberta-base-openai-detector`)
-- `AI_LOCAL_MODEL_MAX_LENGTH` (optional, default: `512`)
+- `AI_LOCAL_MODEL_ENABLED` (optional, default: `true`) - keep as `false` to disable AI detection.
 - `AI_MODEL_PYTHON_BIN` (optional, default: `python`)
-- `SAPLING_API_KEY`
-- `SAPLING_API_URL` (optional, default: `https://api.sapling.ai/api/v1/aidetect`)
-- `ZEROGPT_API_KEY`
-- `ZEROGPT_API_URL` (optional, default tries ZeroGPT public API endpoints)
-- `ORIGINALITY_API_KEY`
-- `ORIGINALITY_API_URL` (optional, default: `https://api.originality.ai/api/v1/scan/ai`)
-- `GPTZERO_API_KEY`
-- `GPTZERO_API_URL` (required if GPTZero is enabled in your environment)
-
-If no provider keys are configured, the system uses only local stylometry + local transformer model and marks confidence accordingly.
+- `ZIPPY_REPO_PATH` (optional) - explicit path to your cloned `zippy` repo.
+- `ZIPPY_PRELUDE_FILE` (optional) - custom prelude file path.
+- `ZIPPY_PRESET` (optional) - compressor preset override.
+- `ZIPPY_SIGMOID_SCALE` (optional, default: `6.0`) - score-to-probability calibration.
 
 ### **Contributing & Feedback:**
 

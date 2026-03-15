@@ -18,64 +18,46 @@ let mockUsers = [
 
 export const authService = {
     async login(email, password) {
-        await delay(800); // Simulate API latency
-        const user = mockUsers.find(u => u.email === email && u.password === password);
+        const response = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
 
-        if (!user) {
-            throw new Error('Invalid email or password');
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to login');
         }
 
-        // Create a JWT-like mock token
-        const token = btoa(JSON.stringify({ id: user.id, email: user.email, exp: Date.now() + 86400000 }));
-
-        // Return safe user data (exclude password)
-        const { password: _, ...safeUser } = user;
-
-        return { token, user: safeUser };
+        return await response.json();
     },
 
     async register(name, email, password) {
-        await delay(1000); // Simulate creating account
+        const response = await fetch('/api/auth/signup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, email, password })
+        });
 
-        if (mockUsers.some(u => u.email === email)) {
-            throw new Error('Email is already registered');
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to register');
         }
 
-        const newUser = {
-            id: Date.now().toString(),
-            name,
-            email,
-            password,
-            plan: 'Free Plan',
-            trialLimit: 3,
-            trialsUsed: 0,
-            documentsChecked: 0,
-            avgSimilarity: 0,
-        };
-
-        mockUsers.push(newUser);
-
-        const token = btoa(JSON.stringify({ id: newUser.id, email: newUser.email, exp: Date.now() + 86400000 }));
-        const { password: _, ...safeUser } = newUser;
-
-        return { token, user: safeUser };
+        return await response.json();
     },
 
     async getCurrentUser(token) {
-        await delay(500);
         if (!token) throw new Error('No token provided');
 
-        try {
-            const decoded = JSON.parse(atob(token));
-            if (decoded.exp < Date.now()) throw new Error('Token expired');
+        const response = await fetch('/api/auth/me', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
 
-            const user = mockUsers.find(u => u.id === decoded.id);
-            if (!user) throw new Error('User not found');
-
-            const { password: _, ...safeUser } = user;
-            return safeUser;
-        } catch (error) {
+        if (!response.ok) {
             throw new Error('Invalid token');
         }
+
+        return await response.json();
     }
 };
