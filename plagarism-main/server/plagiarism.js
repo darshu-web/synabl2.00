@@ -1,5 +1,5 @@
 const STOPWORDS = new Set(["a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "at", "by", "from", "for", "with", "in", "on", "to", "is", "are", "was", "were", "be", "been", "being", "it", "this", "that", "these", "those"]);
-const DEFAULT_CORE_API_KEY = "3i2nyCtj7vYPOx4Hz8MWcrd5RBksAIep";
+const DEFAULT_CORE_API_KEY = "put_your_api_key";
 const CORE_API_KEY = process.env.CORE_API_KEY || DEFAULT_CORE_API_KEY;
 const CORE_API_URL = process.env.CORE_API_URL || "https://api.core.ac.uk/v3/search/works";
 const ARXIV_API_URL = process.env.ARXIV_API_URL || "https://export.arxiv.org/api/query";
